@@ -15,7 +15,7 @@ import { socketService } from "../services/socket";
 import { useGameStore } from "../stores/gameStore";
 import { SocketEvents, GameSettings } from "../types";
 import { DEFAULT_CATEGORIES } from "../constants/words";
-import { Copy, Check, Crown } from "lucide-react";
+import { Copy, Check, Crown, X } from "lucide-react";
 
 export default function Lobby() {
   const { roomId } = useParams<{ roomId: string }>();
@@ -56,13 +56,11 @@ export default function Lobby() {
     });
 
     socketService.on(SocketEvents.ROOM_UPDATED, ({ room: updatedRoom }) => {
-      console.log("Lobby - Room updated:", updatedRoom);
       setRoom(updatedRoom);
       setSettings(updatedRoom.settings);
     });
 
     socketService.on(SocketEvents.GAME_STARTED, ({ word, players }) => {
-      console.log("Lobby - Game started");
       const me = players.find((p: any) => p.id === playerId);
       if (me) {
         setIsImpostor(me.isImpostor);
@@ -75,6 +73,11 @@ export default function Lobby() {
       navigate(`/game/${roomId}`);
     });
 
+    socketService.on(SocketEvents.PLAYER_KICKED, ({ message }) => {
+      alert(message);
+      navigate("/");
+    });
+
     socketService.on(SocketEvents.ERROR, ({ message }) => {
       alert(message);
     });
@@ -84,6 +87,7 @@ export default function Lobby() {
       socketService.off(SocketEvents.PLAYER_LEFT);
       socketService.off(SocketEvents.ROOM_UPDATED);
       socketService.off(SocketEvents.GAME_STARTED);
+      socketService.off(SocketEvents.PLAYER_KICKED);
       socketService.off(SocketEvents.ERROR);
     };
   }, [
@@ -119,6 +123,19 @@ export default function Lobby() {
     }
     if (roomId) {
       socketService.startGame(roomId);
+    }
+  };
+
+  const handleExitLobby = () => {
+    if (roomId) {
+      socketService.leaveRoom(roomId);
+    }
+    navigate("/");
+  };
+
+  const handleKickPlayer = (playerId: string) => {
+    if (roomId && isHost) {
+      socketService.kickPlayer(roomId, playerId);
     }
   };
 
@@ -169,7 +186,7 @@ export default function Lobby() {
                 {room.players.map((player) => (
                   <div
                     key={player.id}
-                    className="flex items-center gap-2 p-3 border rounded-lg"
+                    className="flex items-center gap-2 p-3 border rounded-lg relative"
                   >
                     <Avatar className="h-8 w-8">
                       <AvatarFallback className="text-xs">
@@ -191,6 +208,16 @@ export default function Lobby() {
                         </Badge>
                       )}
                     </div>
+                    {isHost && player.id !== playerId && !player.isHost && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 w-6 p-0 hover:bg-red-100 hover:text-red-600"
+                        onClick={() => handleKickPlayer(player.id)}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -266,19 +293,39 @@ export default function Lobby() {
 
             {/* Start Button */}
             {isHost ? (
-              <Button
-                className="w-full"
-                size="lg"
-                onClick={handleStartGame}
-                disabled={room.players.length < 3}
-              >
-                {room.players.length < 3
-                  ? `Waiting for players... (${room.players.length}/3)`
-                  : "Start Game"}
-              </Button>
+              <div className="space-y-3">
+                <Button
+                  className="w-full"
+                  size="lg"
+                  onClick={handleStartGame}
+                  disabled={room.players.length < 3}
+                >
+                  {room.players.length < 3
+                    ? `Waiting for players... (${room.players.length}/3)`
+                    : "Start Game"}
+                </Button>
+                <Button
+                  className="w-full"
+                  size="lg"
+                  variant="outline"
+                  onClick={handleExitLobby}
+                >
+                  Exit Lobby
+                </Button>
+              </div>
             ) : (
-              <div className="text-center text-muted-foreground py-4">
-                Waiting for host to start the game...
+              <div className="space-y-3">
+                <div className="text-center text-muted-foreground py-4">
+                  Waiting for host to start the game...
+                </div>
+                <Button
+                  className="w-full"
+                  size="lg"
+                  variant="outline"
+                  onClick={handleExitLobby}
+                >
+                  Exit Lobby
+                </Button>
               </div>
             )}
           </CardContent>

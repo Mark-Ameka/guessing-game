@@ -14,6 +14,7 @@ import { socketService } from "../services/socket";
 import { useGameStore } from "../stores/gameStore";
 import { SocketEvents } from "../types";
 import { Trophy, Target, ArrowRight, Clock } from "lucide-react";
+import { ScrollArea } from "../components/ui/scroll-area";
 
 export default function Results() {
   const { roomId } = useParams<{ roomId: string }>();
@@ -80,48 +81,27 @@ export default function Results() {
       setFinalWinner(data.winner);
     });
 
-    socketService.on(
-      SocketEvents.GAME_STARTED,
-      ({ word, players, currentSet }) => {
-        console.log(
-          "GAME_STARTED received in Results - Set",
-          currentSet,
-          "Word:",
-          word
-        );
-
-        // Update player's role for the new set
-        const me = players.find((p: any) => p.id === playerId);
-        if (me) {
-          console.log("Updating player role - isImpostor:", me.isImpostor);
-          setIsImpostor(me.isImpostor);
-          if (!me.isImpostor) {
-            setCurrentWord(word);
-          } else {
-            setCurrentWord(null);
-          }
+    socketService.on(SocketEvents.GAME_STARTED, ({ word, players }) => {
+      // Update player's role for the new set
+      const me = players.find((p: any) => p.id === playerId);
+      if (me) {
+        setIsImpostor(me.isImpostor);
+        if (!me.isImpostor) {
+          setCurrentWord(word);
+        } else {
+          setCurrentWord(null);
         }
-
-        // Clear results for the new set
-        setLastResults(null);
-
-        // DON'T navigate here - let ROOM_UPDATED handle navigation
-        // This prevents race condition where Game.tsx misses the GAME_STARTED event
-        console.log(
-          "Set",
-          currentSet,
-          "started - waiting for ROOM_UPDATED to navigate"
-        );
       }
-    );
+
+      // Clear results for the new set
+      setLastResults(null);
+    });
 
     socketService.on(SocketEvents.ROOM_UPDATED, ({ room: updatedRoom }) => {
-      console.log("ROOM_UPDATED in Results - phase:", updatedRoom.phase);
       setRoom(updatedRoom);
 
       // Navigate to game when phase changes to playing (new set started)
       if (updatedRoom.phase === "playing") {
-        console.log("Phase is playing - navigating to game");
         navigate(`/game/${roomId}`);
       }
     });
@@ -160,11 +140,9 @@ export default function Results() {
 
   const handleNextSet = () => {
     if (!roomId) {
-      console.error("No roomId available");
       return;
     }
 
-    console.log("Host clicking Start Next Set button, emitting next_set event");
     socketService.nextSet(roomId);
   };
 
@@ -173,6 +151,13 @@ export default function Results() {
 
     setIsCreatingNewRoom(true);
     socketService.emit("play_again", { roomId });
+  };
+
+  const handleLeaveGame = () => {
+    if (roomId) {
+      socketService.leaveRoom(roomId);
+    }
+    navigate("/");
   };
 
   if (!room || !results) {
@@ -330,6 +315,40 @@ export default function Results() {
           </CardContent>
         </Card>
 
+        {/* Chat visible during results */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg">Game Chat</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ScrollArea className="h-[300px] pr-4">
+              <div className="space-y-3">
+                {room.messages.length === 0 ? (
+                  <p className="text-center text-muted-foreground py-8">
+                    No messages
+                  </p>
+                ) : (
+                  room.messages.map((msg, idx) => (
+                    <div
+                      key={idx}
+                      className={`p-3 rounded-lg ${
+                        msg.playerId === playerId
+                          ? "bg-black text-white ml-8"
+                          : "bg-gray-100 mr-8"
+                      }`}
+                    >
+                      <p className="text-xs font-semibold mb-1 opacity-70">
+                        {msg.playerNickname}
+                      </p>
+                      <p className="text-sm">{msg.text}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </ScrollArea>
+          </CardContent>
+        </Card>
+
         {/* Actions */}
         <Card>
           <CardContent className="pt-6">
@@ -373,15 +392,7 @@ export default function Results() {
                     <Button
                       className="w-full"
                       size="lg"
-                      onClick={() => {
-                        console.log("!!! BUTTON CLICKED !!!");
-                        console.log(
-                          "Current room.currentSet:",
-                          room.currentSet
-                        );
-                        console.log("Room phase:", room.phase);
-                        handleNextSet();
-                      }}
+                      onClick={handleNextSet}
                     >
                       Start Next Set ({room.currentSet + 1}/{room.settings.sets}
                       )
@@ -404,6 +415,20 @@ export default function Results() {
                 )}
               </div>
             )}
+          </CardContent>
+        </Card>
+
+        {/* Leave Game Button */}
+        <Card>
+          <CardContent className="pt-6">
+            <Button
+              className="w-full"
+              size="lg"
+              variant="destructive"
+              onClick={handleLeaveGame}
+            >
+              Leave Game
+            </Button>
           </CardContent>
         </Card>
       </div>

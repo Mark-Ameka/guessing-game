@@ -17,17 +17,15 @@ class SocketService {
       });
 
       this.socket.on("connect", () => {
-        console.log("Connected to server");
         resolve(this.socket!);
       });
 
       this.socket.on("connect_error", (error) => {
-        console.error("Connection error:", error);
         reject(error);
       });
 
       this.socket.on("disconnect", () => {
-        console.log("Disconnected from server");
+        // Handle disconnect silently
       });
     });
   }
@@ -98,6 +96,10 @@ class SocketService {
 
   leaveRoom(roomId: string) {
     this.emit(SocketEvents.LEAVE_ROOM, { roomId });
+  }
+
+  kickPlayer(roomId: string, playerId: string) {
+    this.emit(SocketEvents.KICK_PLAYER, { roomId, playerId });
   }
 
   updateSettings(roomId: string, settings: any) {

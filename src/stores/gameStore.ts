@@ -1,5 +1,6 @@
 // client/src/stores/gameStore.ts
 import { create } from "zustand";
+import { persist, createJSONStorage } from "zustand/middleware";
 import { Room, Player, Message } from "../types";
 
 interface GameStore {
@@ -48,76 +49,10 @@ interface GameStore {
 
 const STORAGE_KEY = "word_impostor_game";
 
-export const useGameStore = create<GameStore>((set, get) => ({
-  // Initial state
-  playerId: null,
-  playerNickname: null,
-  room: null,
-  roomId: null,
-  currentWord: null,
-  isImpostor: false,
-  currentTurnPlayerId: null,
-  turnTimeLeft: 60,
-  isConnected: false,
-  error: null,
-  lastResults: null,
-
-  // Actions
-  setPlayerId: (id) => {
-    set({ playerId: id });
-    get().saveToLocalStorage();
-  },
-
-  setPlayerNickname: (nickname) => {
-    set({ playerNickname: nickname });
-    get().saveToLocalStorage();
-  },
-
-  setRoom: (room) => {
-    set({ room });
-    get().saveToLocalStorage();
-  },
-
-  setRoomId: (id) => {
-    set({ roomId: id });
-    get().saveToLocalStorage();
-  },
-
-  setCurrentWord: (word) => set({ currentWord: word }),
-
-  setIsImpostor: (value) => set({ isImpostor: value }),
-
-  setCurrentTurnPlayerId: (id) => set({ currentTurnPlayerId: id }),
-
-  setTurnTimeLeft: (time) => set({ turnTimeLeft: time }),
-
-  setIsConnected: (value) => set({ isConnected: value }),
-
-  setError: (error) => set({ error }),
-
-  setLastResults: (results) => set({ lastResults: results }),
-
-  addMessage: (message) =>
-    set((state) => ({
-      room: state.room
-        ? { ...state.room, messages: [...state.room.messages, message] }
-        : null,
-    })),
-
-  updatePlayer: (playerId, updates) =>
-    set((state) => ({
-      room: state.room
-        ? {
-            ...state.room,
-            players: state.room.players.map((p) =>
-              p.id === playerId ? { ...p, ...updates } : p,
-            ),
-          }
-        : null,
-    })),
-
-  reset: () => {
-    set({
+export const useGameStore = create<GameStore>()(
+  persist(
+    (set, get) => ({
+      // Initial state
       playerId: null,
       playerNickname: null,
       room: null,
@@ -126,56 +61,136 @@ export const useGameStore = create<GameStore>((set, get) => ({
       isImpostor: false,
       currentTurnPlayerId: null,
       turnTimeLeft: 60,
+      isConnected: false,
       error: null,
       lastResults: null,
-    });
-    get().clearLocalStorage();
-  },
 
-  // Persistence methods
-  saveToLocalStorage: () => {
-    const state = get();
+      // Actions
+      setPlayerId: (id) => {
+        set({ playerId: id });
+        get().saveToLocalStorage();
+      },
 
-    // Don't persist if in lobby phase - prevents duplicates on reload
-    if (state.room?.phase === "lobby") {
-      return;
-    }
+      setPlayerNickname: (nickname) => {
+        set({ playerNickname: nickname });
+        get().saveToLocalStorage();
+      },
 
-    const dataToSave = {
-      playerId: state.playerId,
-      playerNickname: state.playerNickname,
-      roomId: state.roomId,
-    };
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
-    } catch (error) {
-      console.error("Failed to save to localStorage:", error);
-    }
-  },
+      setRoom: (room) => {
+        set({ room });
+        get().saveToLocalStorage();
+      },
 
-  loadFromLocalStorage: () => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const data = JSON.parse(saved);
+      setRoomId: (id) => {
+        set({ roomId: id });
+        get().saveToLocalStorage();
+      },
+
+      setCurrentWord: (word) => set({ currentWord: word }),
+
+      setIsImpostor: (value) => set({ isImpostor: value }),
+
+      setCurrentTurnPlayerId: (id) => set({ currentTurnPlayerId: id }),
+
+      setTurnTimeLeft: (time) => set({ turnTimeLeft: time }),
+
+      setIsConnected: (value) => set({ isConnected: value }),
+
+      setError: (error) => set({ error }),
+
+      setLastResults: (results) => set({ lastResults: results }),
+
+      addMessage: (message) =>
+        set((state) => ({
+          room: state.room
+            ? { ...state.room, messages: [...state.room.messages, message] }
+            : null,
+        })),
+
+      updatePlayer: (playerId, updates) =>
+        set((state) => ({
+          room: state.room
+            ? {
+                ...state.room,
+                players: state.room.players.map((p) =>
+                  p.id === playerId ? { ...p, ...updates } : p
+                ),
+              }
+            : null,
+        })),
+
+      reset: () => {
         set({
-          playerId: data.playerId,
-          playerNickname: data.playerNickname,
-          roomId: data.roomId,
+          playerId: null,
+          playerNickname: null,
+          room: null,
+          roomId: null,
+          currentWord: null,
+          isImpostor: false,
+          currentTurnPlayerId: null,
+          turnTimeLeft: 60,
+          error: null,
+          lastResults: null,
         });
-        return true;
-      }
-    } catch (error) {
-      console.error("Failed to load from localStorage:", error);
-    }
-    return false;
-  },
+        get().clearLocalStorage();
+      },
 
-  clearLocalStorage: () => {
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-    } catch (error) {
-      console.error("Failed to clear localStorage:", error);
+      // Persistence methods
+      saveToLocalStorage: () => {
+        const state = get();
+
+        // Don't persist if in lobby phase - prevents duplicates on reload
+        if (state.room?.phase === "lobby") {
+          return;
+        }
+
+        const dataToSave = {
+          playerId: state.playerId,
+          playerNickname: state.playerNickname,
+          roomId: state.roomId,
+        };
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
+        } catch (error) {
+          // Silently fail
+        }
+      },
+
+      loadFromLocalStorage: () => {
+        try {
+          const saved = localStorage.getItem(STORAGE_KEY);
+          if (saved) {
+            const data = JSON.parse(saved);
+            set({
+              playerId: data.playerId,
+              playerNickname: data.playerNickname,
+              roomId: data.roomId,
+            });
+            return true;
+          }
+        } catch (error) {
+          // Silently fail
+        }
+        return false;
+      },
+
+      clearLocalStorage: () => {
+        try {
+          localStorage.removeItem(STORAGE_KEY);
+        } catch (error) {
+          // Silently fail
+        }
+      },
+    }),
+    {
+      name: STORAGE_KEY,
+      storage: createJSONStorage(() => localStorage),
+      partialize: (state) => ({
+        playerId: state.playerId,
+        playerNickname: state.playerNickname,
+        roomId: state.roomId,
+        room: state.room?.phase !== "lobby" ? state.room : null,
+      }),
     }
-  },
-}));
+  )
+);

@@ -48,7 +48,7 @@ export default function Home() {
   const reconnectToRoom = async (
     roomId: string,
     playerId: string,
-    playerNickname: string,
+    playerNickname: string
   ) => {
     try {
       await socketService.connect();
@@ -69,15 +69,13 @@ export default function Home() {
         }
       });
 
-      socketService.on(SocketEvents.ERROR, ({ message }) => {
-        console.error("Reconnection failed:", message);
+      socketService.on(SocketEvents.ERROR, () => {
         clearLocalStorage();
       });
 
       // Use rejoin instead of join
       socketService.rejoinRoom(roomId, playerId, playerNickname);
     } catch (err) {
-      console.error("Failed to reconnect:", err);
       clearLocalStorage();
     }
   };

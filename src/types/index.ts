@@ -67,6 +67,7 @@ export enum SocketEvents {
   CREATE_ROOM = "create_room",
   JOIN_ROOM = "join_room",
   LEAVE_ROOM = "leave_room",
+  KICK_PLAYER = "kick_player",
   UPDATE_SETTINGS = "update_settings",
   START_GAME = "start_game",
   SUBMIT_ANSWER = "submit_answer",
@@ -79,6 +80,7 @@ export enum SocketEvents {
   ROOM_UPDATED = "room_updated",
   PLAYER_JOINED = "player_joined",
   PLAYER_LEFT = "player_left",
+  PLAYER_KICKED = "player_kicked",
   GAME_STARTED = "game_started",
   TURN_STARTED = "turn_started",
   ANSWER_SUBMITTED = "answer_submitted",
@@ -124,6 +126,11 @@ export interface SubmitVotePayload {
 
 export interface NextSetPayload {
   roomId: string;
+}
+
+export interface KickPlayerPayload {
+  roomId: string;
+  playerId: string;
 }
 
 export interface ErrorPayload {
