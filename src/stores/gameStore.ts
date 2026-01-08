@@ -1,3 +1,4 @@
+// client/src/stores/gameStore.ts
 import { create } from "zustand";
 import { Room, Player, Message } from "../types";
 
@@ -16,6 +17,9 @@ interface GameStore {
   currentTurnPlayerId: string | null;
   turnTimeLeft: number;
 
+  // Results state
+  lastResults: any | null;
+
   // UI state
   isConnected: boolean;
   error: string | null;
@@ -31,6 +35,7 @@ interface GameStore {
   setTurnTimeLeft: (time: number) => void;
   setIsConnected: (value: boolean) => void;
   setError: (error: string | null) => void;
+  setLastResults: (results: any) => void;
   addMessage: (message: Message) => void;
   updatePlayer: (playerId: string, updates: Partial<Player>) => void;
   reset: () => void;
@@ -55,6 +60,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   turnTimeLeft: 60,
   isConnected: false,
   error: null,
+  lastResults: null,
 
   // Actions
   setPlayerId: (id) => {
@@ -89,6 +95,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   setError: (error) => set({ error }),
 
+  setLastResults: (results) => set({ lastResults: results }),
+
   addMessage: (message) =>
     set((state) => ({
       room: state.room
@@ -100,11 +108,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set((state) => ({
       room: state.room
         ? {
-          ...state.room,
-          players: state.room.players.map((p) =>
-            p.id === playerId ? { ...p, ...updates } : p,
-          ),
-        }
+            ...state.room,
+            players: state.room.players.map((p) =>
+              p.id === playerId ? { ...p, ...updates } : p,
+            ),
+          }
         : null,
     })),
 
@@ -119,6 +127,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       currentTurnPlayerId: null,
       turnTimeLeft: 60,
       error: null,
+      lastResults: null,
     });
     get().clearLocalStorage();
   },
@@ -126,6 +135,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
   // Persistence methods
   saveToLocalStorage: () => {
     const state = get();
+
+    // Don't persist if in lobby phase - prevents duplicates on reload
+    if (state.room?.phase === "lobby") {
+      return;
+    }
+
     const dataToSave = {
       playerId: state.playerId,
       playerNickname: state.playerNickname,

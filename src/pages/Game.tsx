@@ -1,3 +1,4 @@
+// client/src/pages/Game.tsx
 import { useEffect, useState, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "../components/ui/button";
@@ -19,8 +20,15 @@ import { Send, Clock, Crown } from "lucide-react";
 export default function Game() {
   const { roomId } = useParams<{ roomId: string }>();
   const navigate = useNavigate();
-  const { room, playerId, currentWord, isImpostor, setRoom, addMessage } =
-    useGameStore();
+  const {
+    room,
+    playerId,
+    currentWord,
+    isImpostor,
+    setRoom,
+    addMessage,
+    setLastResults,
+  } = useGameStore();
 
   const [answer, setAnswer] = useState("");
   const [currentTurn, setCurrentTurn] = useState<any>(null);
@@ -28,9 +36,11 @@ export default function Game() {
   const [selectedVote, setSelectedVote] = useState<string | null>(null);
   const [hasVoted, setHasVoted] = useState(false);
   const [votingTimeLeft, setVotingTimeLeft] = useState(60);
+  const [showVoting, setShowVoting] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasNavigatedToResults = useRef(false);
 
   useEffect(() => {
     if (!room || !playerId) {
@@ -38,9 +48,26 @@ export default function Game() {
       return;
     }
 
+    // Reset navigation flag when component mounts
+    hasNavigatedToResults.current = false;
+
+    // Check if already in voting phase when component mounts
+    if (room.phase === "voting") {
+      console.log("Component mounted in voting phase, showing voting UI");
+      setShowVoting(true);
+      setCurrentTurn(null);
+      setVotingTimeLeft(60);
+
+      if (timerRef.current) clearInterval(timerRef.current);
+      timerRef.current = setInterval(() => {
+        setVotingTimeLeft((prev) => Math.max(0, prev - 1));
+      }, 1000);
+    }
+
     socketService.on(SocketEvents.TURN_STARTED, (data) => {
       console.log("Turn started:", data);
       setCurrentTurn(data);
+      setShowVoting(false);
       setTimeLeft(60);
 
       if (timerRef.current) clearInterval(timerRef.current);
@@ -71,10 +98,12 @@ export default function Game() {
       setCurrentTurn(null);
     });
 
-    socketService.on(SocketEvents.VOTING_PHASE, () => {
-      console.log("Voting phase started");
+    socketService.on(SocketEvents.VOTING_PHASE, (data) => {
+      console.log("Voting phase event received:", data);
       if (timerRef.current) clearInterval(timerRef.current);
+
       setCurrentTurn(null);
+      setShowVoting(true);
       setHasVoted(false);
       setSelectedVote(null);
       setVotingTimeLeft(60);
@@ -91,15 +120,42 @@ export default function Game() {
       }
     });
 
-    socketService.on(SocketEvents.ROUND_RESULTS, () => {
-      console.log("Round results received");
+    socketService.on(SocketEvents.ROUND_RESULTS, (data) => {
+      console.log("Round results received in Game component:", data);
       if (timerRef.current) clearInterval(timerRef.current);
-      navigate(`/results/${roomId}`);
+
+      // Store results in Zustand store BEFORE navigating
+      setLastResults(data);
+
+      // Prevent multiple navigations
+      if (!hasNavigatedToResults.current) {
+        hasNavigatedToResults.current = true;
+        console.log("Navigating to results page with data");
+        navigate(`/results/${roomId}`);
+      }
     });
 
     socketService.on(SocketEvents.ROOM_UPDATED, ({ room: updatedRoom }) => {
       console.log("Room updated:", updatedRoom);
       setRoom(updatedRoom);
+
+      // Check if phase changed to voting
+      if (updatedRoom.phase === "voting" && !showVoting) {
+        console.log("Room phase changed to voting via ROOM_UPDATED");
+        setShowVoting(true);
+        setCurrentTurn(null);
+      }
+
+      // Check if phase changed to results
+      if (
+        (updatedRoom.phase === "results" ||
+          updatedRoom.phase === "set-transition") &&
+        !hasNavigatedToResults.current
+      ) {
+        console.log("Room phase changed to results, navigating");
+        hasNavigatedToResults.current = true;
+        navigate(`/results/${roomId}`);
+      }
     });
 
     return () => {
@@ -113,7 +169,16 @@ export default function Game() {
       socketService.off(SocketEvents.ROUND_RESULTS);
       socketService.off(SocketEvents.ROOM_UPDATED);
     };
-  }, [room, playerId, roomId, navigate, setRoom, addMessage]);
+  }, [
+    room,
+    playerId,
+    roomId,
+    navigate,
+    setRoom,
+    addMessage,
+    showVoting,
+    setLastResults,
+  ]);
 
   const handleSubmitAnswer = () => {
     if (!answer.trim() || !roomId || !playerId) return;
@@ -126,6 +191,12 @@ export default function Game() {
   const handleSubmitVote = () => {
     if (!selectedVote || !roomId || !playerId || hasVoted) return;
 
+    // Prevent voting for yourself
+    if (selectedVote === playerId) {
+      console.error("Cannot vote for yourself!");
+      return;
+    }
+
     console.log("Submitting vote for:", selectedVote);
     socketService.submitVote(roomId, playerId, selectedVote);
   };
@@ -133,7 +204,7 @@ export default function Game() {
   if (!room) return null;
 
   const isMyTurn = currentTurn?.playerId === playerId;
-  const isVotingPhase = room.phase === "voting";
+  const isVotingPhase = showVoting || room.phase === "voting";
 
   return (
     <div className="min-h-screen p-4 bg-white">
@@ -270,7 +341,7 @@ export default function Game() {
                 <CardTitle className="text-lg">Answers</CardTitle>
               </CardHeader>
               <CardContent>
-                <ScrollArea className="h-100 pr-4">
+                <ScrollArea className="h-[400px] pr-4">
                   <div className="space-y-3">
                     {room.messages.length === 0 ? (
                       <p className="text-center text-muted-foreground py-8">
@@ -280,10 +351,11 @@ export default function Game() {
                       room.messages.map((msg, idx) => (
                         <div
                           key={idx}
-                          className={`p-3 rounded-lg ${msg.playerId === playerId
+                          className={`p-3 rounded-lg ${
+                            msg.playerId === playerId
                               ? "bg-black text-white ml-8"
                               : "bg-gray-100 mr-8"
-                            }`}
+                          }`}
                         >
                           <p className="text-xs font-semibold mb-1 opacity-70">
                             {msg.playerNickname}
@@ -307,7 +379,7 @@ export default function Game() {
                       placeholder="Describe the word..."
                       value={answer}
                       onChange={(e) => setAnswer(e.target.value)}
-                      onKeyDown={(e) =>
+                      onKeyPress={(e) =>
                         e.key === "Enter" && handleSubmitAnswer()
                       }
                       maxLength={200}

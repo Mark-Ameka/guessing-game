@@ -1,3 +1,4 @@
+// client/src/pages/Results.tsx
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "../components/ui/button";
@@ -17,28 +18,39 @@ import { Trophy, Target, ArrowRight, Clock } from "lucide-react";
 export default function Results() {
   const { roomId } = useParams<{ roomId: string }>();
   const navigate = useNavigate();
-  const { room, playerId, setRoom } = useGameStore();
+  const { room, playerId, lastResults, setRoom, setRoomId, setLastResults } =
+    useGameStore();
 
-  const [results, setResults] = useState<any>(null);
+  const [results, setResults] = useState<any>(lastResults);
   const [gameComplete, setGameComplete] = useState(false);
   const [finalWinner, setFinalWinner] = useState<any>(null);
   const [autoNextTimer, setAutoNextTimer] = useState<number>(60);
+  const [isCreatingNewRoom, setIsCreatingNewRoom] = useState(false);
 
   const isHost = room?.players.find((p) => p.id === playerId)?.isHost;
 
   useEffect(() => {
-    if (!room || !playerId) {
+    // Load results from Zustand store immediately
+    if (lastResults && !results) {
+      setResults(lastResults);
+    }
+
+    if (!playerId || !roomId) {
       navigate("/");
       return;
     }
 
+    // Check if this is the final set immediately
+    if (room && room.currentSet >= room.settings.sets) {
+      setGameComplete(true);
+    }
+
     socketService.on(SocketEvents.ROUND_RESULTS, (data) => {
-      console.log("Round results:", data);
       setResults(data);
+      setLastResults(data);
     });
 
     socketService.on(SocketEvents.SET_COMPLETE, ({ autoNextIn }) => {
-      console.log("Set complete, auto next in:", autoNextIn);
       setAutoNextTimer(autoNextIn);
 
       const interval = setInterval(() => {
@@ -55,20 +67,29 @@ export default function Results() {
     });
 
     socketService.on(SocketEvents.GAME_COMPLETE, (data) => {
-      console.log("Game complete:", data);
       setGameComplete(true);
       setFinalWinner(data.winner);
     });
 
     socketService.on(SocketEvents.GAME_STARTED, () => {
-      console.log("Next set started, navigating to game");
+      // Clear results for the new set
+      setLastResults(null);
       navigate(`/game/${roomId}`);
     });
 
     socketService.on(SocketEvents.ROOM_UPDATED, ({ room: updatedRoom }) => {
-      console.log("Room updated:", updatedRoom);
       setRoom(updatedRoom);
     });
+
+    socketService.on(
+      SocketEvents.ROOM_CREATED,
+      ({ roomId: newRoomId, room: newRoom }) => {
+        setRoomId(newRoomId);
+        setRoom(newRoom);
+        setIsCreatingNewRoom(false);
+        navigate(`/lobby/${newRoomId}`);
+      }
+    );
 
     return () => {
       socketService.off(SocketEvents.ROUND_RESULTS);
@@ -76,24 +97,39 @@ export default function Results() {
       socketService.off(SocketEvents.GAME_COMPLETE);
       socketService.off(SocketEvents.GAME_STARTED);
       socketService.off(SocketEvents.ROOM_UPDATED);
+      socketService.off(SocketEvents.ROOM_CREATED);
     };
-  }, [room, playerId, roomId, navigate, setRoom]);
+  }, [
+    room,
+    playerId,
+    roomId,
+    navigate,
+    setRoom,
+    setRoomId,
+    lastResults,
+    results,
+    setLastResults,
+  ]);
 
   const handleNextSet = () => {
     if (roomId) {
-      console.log("Host starting next set");
       socketService.nextSet(roomId);
     }
   };
 
   const handlePlayAgain = () => {
-    navigate("/");
+    if (!roomId || !room) return;
+
+    setIsCreatingNewRoom(true);
+    socketService.emit("play_again", { roomId });
   };
 
   if (!room || !results) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <p className="text-muted-foreground">Loading results...</p>
+        <div className="text-center space-y-4">
+          <p className="text-muted-foreground">Loading results...</p>
+        </div>
       </div>
     );
   }
@@ -101,6 +137,9 @@ export default function Results() {
   const impostorWon = results.correctVoters.length === 0;
   const iWasImpostor = results.impostorId === playerId;
   const iVotedCorrectly = results.correctVoters.includes(playerId);
+
+  // Check if this is the last set (game complete)
+  const isLastSet = room.currentSet >= room.settings.sets;
 
   return (
     <div className="min-h-screen p-4 bg-white">
@@ -205,10 +244,11 @@ export default function Results() {
               {results.leaderboard.map((player: any, idx: number) => (
                 <div
                   key={player.id}
-                  className={`flex items-center justify-between p-3 rounded-lg ${idx === 0
+                  className={`flex items-center justify-between p-3 rounded-lg ${
+                    idx === 0
                       ? "bg-yellow-50 border-2 border-yellow-200"
                       : "border"
-                    }`}
+                  }`}
                 >
                   <div className="flex items-center gap-3">
                     <div className="flex items-center justify-center w-8 h-8 rounded-full bg-gray-100 font-bold text-sm">
@@ -241,22 +281,38 @@ export default function Results() {
         {/* Actions */}
         <Card>
           <CardContent className="pt-6">
-            {gameComplete ? (
+            {isLastSet || gameComplete ? (
               <div className="space-y-4">
                 <div className="text-center p-6 bg-yellow-50 rounded-lg border-2 border-yellow-200">
                   <Trophy className="h-16 w-16 mx-auto mb-3 text-yellow-600" />
                   <p className="text-2xl font-bold mb-1">Game Complete!</p>
                   <p className="text-lg">
                     Winner:{" "}
-                    <span className="font-bold">{finalWinner?.nickname}</span>
+                    <span className="font-bold">
+                      {finalWinner?.nickname ||
+                        results.leaderboard[0]?.nickname}
+                    </span>
                   </p>
                   <p className="text-3xl font-bold text-yellow-600 mt-2">
-                    {finalWinner?.score} points
+                    {finalWinner?.score || results.leaderboard[0]?.score} points
                   </p>
                 </div>
-                <Button className="w-full" size="lg" onClick={handlePlayAgain}>
-                  Play Again
-                </Button>
+                {isHost ? (
+                  <Button
+                    className="w-full"
+                    size="lg"
+                    onClick={handlePlayAgain}
+                    disabled={isCreatingNewRoom}
+                  >
+                    {isCreatingNewRoom
+                      ? "Creating New Room..."
+                      : "Play Again with Same Players"}
+                  </Button>
+                ) : (
+                  <div className="text-center text-muted-foreground py-4">
+                    Waiting for host to start a new game...
+                  </div>
+                )}
               </div>
             ) : (
               <div className="space-y-4">
