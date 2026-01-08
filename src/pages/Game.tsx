@@ -14,7 +14,7 @@ import { ScrollArea } from "../components/ui/scroll-area";
 import { socketService } from "../services/socket";
 import { useGameStore } from "../stores/gameStore";
 import { SocketEvents } from "../types";
-import { Send, Clock, Crown } from "lucide-react";
+import { Send, Clock, Crown, Eye, EyeOff } from "lucide-react";
 
 export default function Game() {
   const { roomId } = useParams<{ roomId: string }>();
@@ -37,6 +37,7 @@ export default function Game() {
   const [votingTimeLeft, setVotingTimeLeft] = useState(60);
   const [showVoting, setShowVoting] = useState(false);
   const [earlyVoting, setEarlyVoting] = useState(false);
+  const [wordVisible, setWordVisible] = useState(true);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -320,9 +321,28 @@ export default function Game() {
                     You're the Impostor
                   </Badge>
                 ) : (
-                  <div>
+                  <div className="flex flex-col items-start gap-2">
                     <p className="text-xs text-muted-foreground">Your word:</p>
-                    <p className="text-xl font-bold">{currentWord}</p>
+
+                    <div className="flex items-center gap-2">
+                      <div>
+                        <p className="text-xl font-bold">
+                          {wordVisible ? currentWord : "••••••"}
+                        </p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 p-0"
+                        onClick={() => setWordVisible(!wordVisible)}
+                      >
+                        {wordVisible ? (
+                          <EyeOff className="h-4 w-4" />
+                        ) : (
+                          <Eye className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </div>
                   </div>
                 )}
               </div>
