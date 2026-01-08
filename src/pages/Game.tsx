@@ -51,18 +51,10 @@ export default function Game() {
     // Reset navigation flag when component mounts
     hasNavigatedToResults.current = false;
 
-    // Check if already in voting phase when component mounts
-    if (room.phase === "voting") {
-      console.log("Component mounted in voting phase, showing voting UI");
-      setShowVoting(true);
-      setCurrentTurn(null);
-      setVotingTimeLeft(60);
-
-      if (timerRef.current) clearInterval(timerRef.current);
-      timerRef.current = setInterval(() => {
-        setVotingTimeLeft((prev) => Math.max(0, prev - 1));
-      }, 1000);
-    }
+    // Reset voting state when starting new game/set
+    setShowVoting(false);
+    setHasVoted(false);
+    setSelectedVote(null);
 
     socketService.on(SocketEvents.TURN_STARTED, (data) => {
       console.log("Turn started:", data);
@@ -96,6 +88,38 @@ export default function Game() {
       console.log("Rotation complete");
       if (timerRef.current) clearInterval(timerRef.current);
       setCurrentTurn(null);
+    });
+
+    socketService.on(SocketEvents.GAME_STARTED, ({ word, players, currentSet }) => {
+      console.log("GAME_STARTED received - Starting Set", currentSet);
+      
+      // COMPLETE RESET for new set
+      setShowVoting(false);
+      setHasVoted(false);
+      setSelectedVote(null);
+      setCurrentTurn(null);
+      setAnswer("");
+      
+      // Clear any existing timers
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      
+      // Reset navigation flag
+      hasNavigatedToResults.current = false;
+      
+      // Update room with fresh playing phase and cleared messages
+      if (room) {
+        setRoom({
+          ...room,
+          phase: "playing",
+          messages: [],
+          currentSet: currentSet,
+        });
+      }
+      
+      console.log("Game state completely reset for new set");
     });
 
     socketService.on(SocketEvents.VOTING_PHASE, (data) => {
@@ -146,6 +170,14 @@ export default function Game() {
         setCurrentTurn(null);
       }
 
+      // Reset voting when phase changes back to playing
+      if (updatedRoom.phase === "playing" && showVoting) {
+        console.log("Room phase changed to playing, hiding voting");
+        setShowVoting(false);
+        setHasVoted(false);
+        setSelectedVote(null);
+      }
+
       // Check if phase changed to results
       if (
         (updatedRoom.phase === "results" ||
@@ -160,6 +192,7 @@ export default function Game() {
 
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
+      socketService.off(SocketEvents.GAME_STARTED);
       socketService.off(SocketEvents.TURN_STARTED);
       socketService.off(SocketEvents.ANSWER_SUBMITTED);
       socketService.off(SocketEvents.TURN_TIMEOUT);

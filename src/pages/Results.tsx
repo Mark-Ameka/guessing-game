@@ -18,8 +18,16 @@ import { Trophy, Target, ArrowRight, Clock } from "lucide-react";
 export default function Results() {
   const { roomId } = useParams<{ roomId: string }>();
   const navigate = useNavigate();
-  const { room, playerId, lastResults, setRoom, setRoomId, setLastResults } =
-    useGameStore();
+  const {
+    room,
+    playerId,
+    lastResults,
+    setRoom,
+    setRoomId,
+    setLastResults,
+    setCurrentWord,
+    setIsImpostor,
+  } = useGameStore();
 
   const [results, setResults] = useState<any>(lastResults);
   const [gameComplete, setGameComplete] = useState(false);
@@ -41,7 +49,8 @@ export default function Results() {
     }
 
     // Check if this is the final set immediately
-    if (room && room.currentSet >= room.settings.sets) {
+    // If the next set would exceed total sets, this is the last set
+    if (room && room.currentSet + 1 > room.settings.sets) {
       setGameComplete(true);
     }
 
@@ -71,14 +80,50 @@ export default function Results() {
       setFinalWinner(data.winner);
     });
 
-    socketService.on(SocketEvents.GAME_STARTED, () => {
-      // Clear results for the new set
-      setLastResults(null);
-      navigate(`/game/${roomId}`);
-    });
+    socketService.on(
+      SocketEvents.GAME_STARTED,
+      ({ word, players, currentSet }) => {
+        console.log(
+          "GAME_STARTED received in Results - Set",
+          currentSet,
+          "Word:",
+          word
+        );
+
+        // Update player's role for the new set
+        const me = players.find((p: any) => p.id === playerId);
+        if (me) {
+          console.log("Updating player role - isImpostor:", me.isImpostor);
+          setIsImpostor(me.isImpostor);
+          if (!me.isImpostor) {
+            setCurrentWord(word);
+          } else {
+            setCurrentWord(null);
+          }
+        }
+
+        // Clear results for the new set
+        setLastResults(null);
+
+        // DON'T navigate here - let ROOM_UPDATED handle navigation
+        // This prevents race condition where Game.tsx misses the GAME_STARTED event
+        console.log(
+          "Set",
+          currentSet,
+          "started - waiting for ROOM_UPDATED to navigate"
+        );
+      }
+    );
 
     socketService.on(SocketEvents.ROOM_UPDATED, ({ room: updatedRoom }) => {
+      console.log("ROOM_UPDATED in Results - phase:", updatedRoom.phase);
       setRoom(updatedRoom);
+
+      // Navigate to game when phase changes to playing (new set started)
+      if (updatedRoom.phase === "playing") {
+        console.log("Phase is playing - navigating to game");
+        navigate(`/game/${roomId}`);
+      }
     });
 
     socketService.on(
@@ -109,12 +154,18 @@ export default function Results() {
     lastResults,
     results,
     setLastResults,
+    setCurrentWord,
+    setIsImpostor,
   ]);
 
   const handleNextSet = () => {
-    if (roomId) {
-      socketService.nextSet(roomId);
+    if (!roomId) {
+      console.error("No roomId available");
+      return;
     }
+
+    console.log("Host clicking Start Next Set button, emitting next_set event");
+    socketService.nextSet(roomId);
   };
 
   const handlePlayAgain = () => {
@@ -139,7 +190,8 @@ export default function Results() {
   const iVotedCorrectly = results.correctVoters.includes(playerId);
 
   // Check if this is the last set (game complete)
-  const isLastSet = room.currentSet >= room.settings.sets;
+  // If the next set number would exceed total sets, this is the last set
+  const isLastSet = room.currentSet + 1 > room.settings.sets;
 
   return (
     <div className="min-h-screen p-4 bg-white">
@@ -321,7 +373,15 @@ export default function Results() {
                     <Button
                       className="w-full"
                       size="lg"
-                      onClick={handleNextSet}
+                      onClick={() => {
+                        console.log("!!! BUTTON CLICKED !!!");
+                        console.log(
+                          "Current room.currentSet:",
+                          room.currentSet
+                        );
+                        console.log("Room phase:", room.phase);
+                        handleNextSet();
+                      }}
                     >
                       Start Next Set ({room.currentSet + 1}/{room.settings.sets}
                       )
