@@ -1,4 +1,3 @@
-// client/src/pages/Game.tsx
 import { useEffect, useState, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "../components/ui/button";
@@ -90,25 +89,25 @@ export default function Game() {
       setCurrentTurn(null);
     });
 
-    socketService.on(SocketEvents.GAME_STARTED, ({ word, players, currentSet }) => {
+    socketService.on(SocketEvents.GAME_STARTED, ({ currentSet }) => {
       console.log("GAME_STARTED received - Starting Set", currentSet);
-      
+
       // COMPLETE RESET for new set
       setShowVoting(false);
       setHasVoted(false);
       setSelectedVote(null);
       setCurrentTurn(null);
       setAnswer("");
-      
+
       // Clear any existing timers
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
-      
+
       // Reset navigation flag
       hasNavigatedToResults.current = false;
-      
+
       // Update room with fresh playing phase and cleared messages
       if (room) {
         setRoom({
@@ -118,7 +117,7 @@ export default function Game() {
           currentSet: currentSet,
         });
       }
-      
+
       console.log("Game state completely reset for new set");
     });
 
@@ -384,11 +383,10 @@ export default function Game() {
                       room.messages.map((msg, idx) => (
                         <div
                           key={idx}
-                          className={`p-3 rounded-lg ${
-                            msg.playerId === playerId
+                          className={`p-3 rounded-lg ${msg.playerId === playerId
                               ? "bg-black text-white ml-8"
                               : "bg-gray-100 mr-8"
-                          }`}
+                            }`}
                         >
                           <p className="text-xs font-semibold mb-1 opacity-70">
                             {msg.playerNickname}
