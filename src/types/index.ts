@@ -1,3 +1,4 @@
+// client/src/types/index.ts (and server/src/types.ts)
 export interface Player {
   id: string;
   nickname: string;
@@ -5,7 +6,7 @@ export interface Player {
   isImpostor: boolean;
   hasAnswered: boolean;
   score: number;
-  vote?: string; // player id they voted for
+  vote?: string;
 }
 
 export interface GameSettings {
@@ -36,6 +37,8 @@ export interface Room {
   impostorId?: string;
   turnStartTime?: number;
   phase: GamePhase;
+  isPaused?: boolean;
+  pausedTimeLeft?: number;
 }
 
 export type GamePhase =
@@ -72,7 +75,11 @@ export enum SocketEvents {
   START_GAME = "start_game",
   SUBMIT_ANSWER = "submit_answer",
   SUBMIT_VOTE = "submit_vote",
+  VOTE_IN_ADVANCE = "vote_in_advance",
   NEXT_SET = "next_set",
+  PAUSE_GAME = "pause_game",
+  RESUME_GAME = "resume_game",
+  BACK_TO_LOBBY = "back_to_lobby",
 
   // Server -> Client
   ROOM_CREATED = "room_created",
@@ -81,6 +88,7 @@ export enum SocketEvents {
   PLAYER_JOINED = "player_joined",
   PLAYER_LEFT = "player_left",
   PLAYER_KICKED = "player_kicked",
+  PLAYER_VOTED_EARLY = "player_voted_early",
   GAME_STARTED = "game_started",
   TURN_STARTED = "turn_started",
   ANSWER_SUBMITTED = "answer_submitted",
@@ -91,6 +99,8 @@ export enum SocketEvents {
   ROUND_RESULTS = "round_results",
   SET_COMPLETE = "set_complete",
   GAME_COMPLETE = "game_complete",
+  GAME_PAUSED = "game_paused",
+  GAME_RESUMED = "game_resumed",
   ERROR = "error",
 }
 
@@ -124,6 +134,11 @@ export interface SubmitVotePayload {
   votedForId: string;
 }
 
+export interface VoteInAdvancePayload {
+  roomId: string;
+  playerId: string;
+}
+
 export interface NextSetPayload {
   roomId: string;
 }
@@ -131,6 +146,19 @@ export interface NextSetPayload {
 export interface KickPlayerPayload {
   roomId: string;
   playerId: string;
+}
+
+export interface PauseGamePayload {
+  roomId: string;
+  timeLeft: number;
+}
+
+export interface ResumeGamePayload {
+  roomId: string;
+}
+
+export interface BackToLobbyPayload {
+  roomId: string;
 }
 
 export interface ErrorPayload {

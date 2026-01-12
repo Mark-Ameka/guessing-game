@@ -1,5 +1,4 @@
-// client/src/pages/Results.tsx
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "../components/ui/button";
 import {
@@ -28,6 +27,7 @@ export default function Results() {
     setLastResults,
     setCurrentWord,
     setIsImpostor,
+    reset,
   } = useGameStore();
 
   const [results, setResults] = useState<any>(lastResults);
@@ -36,10 +36,11 @@ export default function Results() {
   const [autoNextTimer, setAutoNextTimer] = useState<number>(60);
   const [isCreatingNewRoom, setIsCreatingNewRoom] = useState(false);
 
+  const autoTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const isHost = room?.players.find((p) => p.id === playerId)?.isHost;
 
   useEffect(() => {
-    // Load results from Zustand store immediately
     if (lastResults && !results) {
       setResults(lastResults);
     }
@@ -49,8 +50,6 @@ export default function Results() {
       return;
     }
 
-    // Check if this is the final set immediately
-    // If the next set would exceed total sets, this is the last set
     if (room && room.currentSet + 1 > room.settings.sets) {
       setGameComplete(true);
     }
@@ -63,17 +62,22 @@ export default function Results() {
     socketService.on(SocketEvents.SET_COMPLETE, ({ autoNextIn }) => {
       setAutoNextTimer(autoNextIn);
 
-      const interval = setInterval(() => {
+      if (autoTimerRef.current) {
+        clearInterval(autoTimerRef.current);
+      }
+
+      autoTimerRef.current = setInterval(() => {
         setAutoNextTimer((prev) => {
           if (prev <= 1) {
-            clearInterval(interval);
+            if (autoTimerRef.current) {
+              clearInterval(autoTimerRef.current);
+              autoTimerRef.current = null;
+            }
             return 0;
           }
           return prev - 1;
         });
       }, 1000);
-
-      return () => clearInterval(interval);
     });
 
     socketService.on(SocketEvents.GAME_COMPLETE, (data) => {
@@ -82,7 +86,6 @@ export default function Results() {
     });
 
     socketService.on(SocketEvents.GAME_STARTED, ({ word, players }) => {
-      // Update player's role for the new set
       const me = players.find((p: any) => p.id === playerId);
       if (me) {
         setIsImpostor(me.isImpostor);
@@ -92,15 +95,12 @@ export default function Results() {
           setCurrentWord(null);
         }
       }
-
-      // Clear results for the new set
       setLastResults(null);
     });
 
     socketService.on(SocketEvents.ROOM_UPDATED, ({ room: updatedRoom }) => {
       setRoom(updatedRoom);
 
-      // Navigate to game when phase changes to playing (new set started)
       if (updatedRoom.phase === "playing") {
         navigate(`/game/${roomId}`);
       }
@@ -113,16 +113,34 @@ export default function Results() {
         setRoom(newRoom);
         setIsCreatingNewRoom(false);
         navigate(`/lobby/${newRoomId}`);
-      }
+      },
     );
 
+    // FIX #3: Handle being kicked from results screen
+    socketService.on(SocketEvents.PLAYER_KICKED, ({ message }) => {
+      if (autoTimerRef.current) {
+        clearInterval(autoTimerRef.current);
+        autoTimerRef.current = null;
+      }
+
+      reset();
+      alert(message);
+      navigate("/");
+    });
+
     return () => {
+      if (autoTimerRef.current) {
+        clearInterval(autoTimerRef.current);
+        autoTimerRef.current = null;
+      }
+
       socketService.off(SocketEvents.ROUND_RESULTS);
       socketService.off(SocketEvents.SET_COMPLETE);
       socketService.off(SocketEvents.GAME_COMPLETE);
       socketService.off(SocketEvents.GAME_STARTED);
       socketService.off(SocketEvents.ROOM_UPDATED);
       socketService.off(SocketEvents.ROOM_CREATED);
+      socketService.off(SocketEvents.PLAYER_KICKED);
     };
   }, [
     room,
@@ -136,27 +154,43 @@ export default function Results() {
     setLastResults,
     setCurrentWord,
     setIsImpostor,
+    reset,
   ]);
 
   const handleNextSet = () => {
-    if (!roomId) {
-      return;
-    }
-
+    if (!roomId) return;
     socketService.nextSet(roomId);
   };
 
   const handlePlayAgain = () => {
     if (!roomId || !room) return;
-
     setIsCreatingNewRoom(true);
     socketService.emit("play_again", { roomId });
   };
 
+  const handleBackToLobby = () => {
+    if (!roomId || !room) return;
+    socketService.backToLobby(roomId);
+  };
+
+  // FIX #2: Properly clear everything when leaving
   const handleLeaveGame = () => {
+    if (autoTimerRef.current) {
+      clearInterval(autoTimerRef.current);
+      autoTimerRef.current = null;
+    }
+
     if (roomId) {
       socketService.leaveRoom(roomId);
     }
+
+    // Clear Zustand store
+    reset();
+
+    // Clear localStorage
+    localStorage.removeItem("game-storage");
+
+    // Navigate to home
     navigate("/");
   };
 
@@ -173,9 +207,6 @@ export default function Results() {
   const impostorWon = results.correctVoters.length === 0;
   const iWasImpostor = results.impostorId === playerId;
   const iVotedCorrectly = results.correctVoters.includes(playerId);
-
-  // Check if this is the last set (game complete)
-  // If the next set number would exceed total sets, this is the last set
   const isLastSet = room.currentSet + 1 > room.settings.sets;
 
   return (
@@ -203,13 +234,14 @@ export default function Results() {
               <p className="text-xl font-bold">{results.impostorNickname}</p>
             </div>
 
+            {/* FIX #4: Correct badge logic */}
             {iWasImpostor && (
               <Badge
                 variant={impostorWon ? "default" : "destructive"}
                 className="text-sm py-1"
               >
                 {impostorWon
-                  ? `🎉 You fooled them! +${2000} pts`
+                  ? `🎉 You fooled them! +2000 pts`
                   : "😔 You were caught!"}
               </Badge>
             )}
@@ -220,7 +252,7 @@ export default function Results() {
                 className="text-sm py-1"
               >
                 {iVotedCorrectly
-                  ? `✅ You guessed correctly! +${1000} pts`
+                  ? `✅ You guessed correctly! +1000 pts`
                   : "❌ Wrong guess"}
               </Badge>
             )}
@@ -321,7 +353,7 @@ export default function Results() {
             <CardTitle className="text-lg">Game Chat</CardTitle>
           </CardHeader>
           <CardContent>
-            <ScrollArea className="h-[300px] pr-4">
+            <ScrollArea className="h-100 pr-4">
               <div className="space-y-3">
                 {room.messages.length === 0 ? (
                   <p className="text-center text-muted-foreground py-8">
@@ -369,16 +401,26 @@ export default function Results() {
                   </p>
                 </div>
                 {isHost ? (
-                  <Button
-                    className="w-full"
-                    size="lg"
-                    onClick={handlePlayAgain}
-                    disabled={isCreatingNewRoom}
-                  >
-                    {isCreatingNewRoom
-                      ? "Creating New Room..."
-                      : "Play Again with Same Players"}
-                  </Button>
+                  <>
+                    <Button
+                      className="w-full"
+                      size="lg"
+                      onClick={handlePlayAgain}
+                      disabled={isCreatingNewRoom}
+                    >
+                      {isCreatingNewRoom
+                        ? "Creating New Room..."
+                        : "Play Again with Same Players"}
+                    </Button>
+                    <Button
+                      className="w-full"
+                      size="lg"
+                      variant="outline"
+                      onClick={handleBackToLobby}
+                    >
+                      Back to Lobby with Same Players
+                    </Button>
+                  </>
                 ) : (
                   <div className="text-center text-muted-foreground py-4">
                     Waiting for host to start a new game...
@@ -401,6 +443,14 @@ export default function Results() {
                       <Clock className="h-4 w-4" />
                       <span>Auto-starting in {autoNextTimer}s</span>
                     </div>
+                    <Button
+                      className="w-full"
+                      size="lg"
+                      variant="outline"
+                      onClick={handleBackToLobby}
+                    >
+                      Back to Lobby with Same Players
+                    </Button>
                   </>
                 ) : (
                   <div className="text-center space-y-2">

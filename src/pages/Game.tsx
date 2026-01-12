@@ -14,7 +14,8 @@ import { ScrollArea } from "../components/ui/scroll-area";
 import { socketService } from "../services/socket";
 import { useGameStore } from "../stores/gameStore";
 import { SocketEvents } from "../types";
-import { Send, Clock, Crown, Eye, EyeOff } from "lucide-react";
+import { Send, Clock, Crown, Eye, EyeOff, Pause, Play, X } from "lucide-react";
+import { Alert, AlertDescription } from "../components/ui/alert";
 
 export default function Game() {
   const { roomId } = useParams<{ roomId: string }>();
@@ -27,6 +28,7 @@ export default function Game() {
     setRoom,
     addMessage,
     setLastResults,
+    reset,
   } = useGameStore();
 
   const [answer, setAnswer] = useState("");
@@ -37,12 +39,17 @@ export default function Game() {
   const [votingTimeLeft, setVotingTimeLeft] = useState(60);
   const [showVoting, setShowVoting] = useState(false);
   const [earlyVoting, setEarlyVoting] = useState(false);
-  const [wordVisible, setWordVisible] = useState(true);
+  const [wordVisible, setWordVisible] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const [voteNotifications, setVoteNotifications] = useState<string[]>([]);
+  const [votedPlayers, setVotedPlayers] = useState<Set<string>>(new Set());
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const votingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const hasNavigatedToResults = useRef(false);
+
+  const isHost = room?.players.find((p) => p.id === playerId)?.isHost;
 
   useEffect(() => {
     if (!room || !playerId) {
@@ -50,10 +57,7 @@ export default function Game() {
       return;
     }
 
-    // Reset navigation flag when component mounts
     hasNavigatedToResults.current = false;
-
-    // Reset voting state when starting new game/set
     setShowVoting(false);
     setHasVoted(false);
     setSelectedVote(null);
@@ -63,14 +67,13 @@ export default function Game() {
       setCurrentTurn(data);
       setShowVoting(false);
       setTimeLeft(60);
+      setIsPaused(false);
 
-      // Clear existing timer before starting new one
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
 
-      // Start new timer
       timerRef.current = setInterval(() => {
         setTimeLeft((prev) => {
           const newTime = prev - 1;
@@ -86,9 +89,50 @@ export default function Game() {
       }, 1000);
     });
 
+    socketService.on(SocketEvents.GAME_PAUSED, () => {
+      setIsPaused(true);
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    });
+
+    // FIX #1: Properly restart timer when game resumes
+    socketService.on(SocketEvents.GAME_RESUMED, ({ timeLeft: resumedTime }) => {
+      console.log("Game resumed with timeLeft:", resumedTime);
+
+      // Clear any existing timer first
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+
+      // Set the time and unpause
+      setTimeLeft(resumedTime);
+      setIsPaused(false);
+
+      // Use setTimeout to ensure state has updated before starting interval
+      setTimeout(() => {
+        console.log("Starting interval timer...");
+        timerRef.current = setInterval(() => {
+          setTimeLeft((prev) => {
+            const newTime = prev - 1;
+            console.log("Timer tick:", newTime);
+            if (newTime <= 0) {
+              if (timerRef.current) {
+                clearInterval(timerRef.current);
+                timerRef.current = null;
+              }
+              return 0;
+            }
+            return newTime;
+          });
+        }, 1000);
+      }, 100);
+    });
+
     socketService.on(SocketEvents.ANSWER_SUBMITTED, ({ message }) => {
       addMessage(message);
-      // Only scroll when a message is added, not during turn changes
       setTimeout(() => {
         if (scrollRef.current) {
           scrollRef.current.scrollIntoView({
@@ -115,24 +159,22 @@ export default function Game() {
     });
 
     socketService.on(SocketEvents.GAME_STARTED, ({ currentSet }) => {
-      // COMPLETE RESET for new set
       setShowVoting(false);
       setHasVoted(false);
       setSelectedVote(null);
       setEarlyVoting(false);
       setCurrentTurn(null);
       setAnswer("");
+      setVotedPlayers(new Set());
+      setVoteNotifications([]);
 
-      // Clear any existing timers
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
 
-      // Reset navigation flag
       hasNavigatedToResults.current = false;
 
-      // Update room with fresh playing phase and cleared messages
       if (room) {
         setRoom({
           ...room,
@@ -144,13 +186,11 @@ export default function Game() {
     });
 
     socketService.on(SocketEvents.VOTING_PHASE, () => {
-      // Clear turn timer
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
 
-      // Clear any existing voting timer
       if (votingTimerRef.current) {
         clearInterval(votingTimerRef.current);
         votingTimerRef.current = null;
@@ -161,8 +201,8 @@ export default function Game() {
       setHasVoted(false);
       setSelectedVote(null);
       setVotingTimeLeft(60);
+      setVotedPlayers(new Set());
 
-      // Start voting timer
       votingTimerRef.current = setInterval(() => {
         setVotingTimeLeft((prev) => {
           const newTime = prev - 1;
@@ -178,13 +218,60 @@ export default function Game() {
       }, 1000);
     });
 
-    socketService.on(SocketEvents.VOTE_SUBMITTED, ({ playerId: voterId }) => {
-      if (voterId === playerId) {
-        setHasVoted(true);
+    socketService.on(SocketEvents.PLAYER_VOTED_EARLY, ({ playerNickname }) => {
+      setVoteNotifications((prev) => [
+        ...prev,
+        `${playerNickname} is voting in advance`,
+      ]);
+      setTimeout(() => {
+        setVoteNotifications((prev) => prev.slice(1));
+      }, 3000);
+    });
+
+    socketService.on(
+      SocketEvents.VOTE_SUBMITTED,
+      ({ playerId: voterId, playerNickname }) => {
+        if (voterId === playerId) {
+          setHasVoted(true);
+
+          if (votingTimerRef.current) {
+            clearInterval(votingTimerRef.current);
+            votingTimerRef.current = null;
+          }
+        } else {
+          setVoteNotifications((prev) => [
+            ...prev,
+            `${playerNickname} has voted`,
+          ]);
+          setTimeout(() => {
+            setVoteNotifications((prev) => prev.slice(1));
+          }, 3000);
+        }
+
+        setVotedPlayers((prev) => new Set([...prev, voterId]));
+      },
+    );
+
+    socketService.on(SocketEvents.ROUND_RESULTS, (data) => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      if (votingTimerRef.current) {
+        clearInterval(votingTimerRef.current);
+        votingTimerRef.current = null;
+      }
+
+      setLastResults(data);
+
+      if (!hasNavigatedToResults.current) {
+        hasNavigatedToResults.current = true;
+        navigate(`/results/${roomId}`);
       }
     });
 
-    socketService.on(SocketEvents.ROUND_RESULTS, (data) => {
+    // FIX #3: Handle being kicked from game
+    socketService.on(SocketEvents.PLAYER_KICKED, ({ message }) => {
       // Clear all timers
       if (timerRef.current) {
         clearInterval(timerRef.current);
@@ -195,33 +282,26 @@ export default function Game() {
         votingTimerRef.current = null;
       }
 
-      // Store results in Zustand store BEFORE navigating
-      setLastResults(data);
-
-      // Prevent multiple navigations
-      if (!hasNavigatedToResults.current) {
-        hasNavigatedToResults.current = true;
-        navigate(`/results/${roomId}`);
-      }
+      // Clear store and navigate
+      reset();
+      alert(message);
+      navigate("/");
     });
 
     socketService.on(SocketEvents.ROOM_UPDATED, ({ room: updatedRoom }) => {
       setRoom(updatedRoom);
 
-      // Check if phase changed to voting
       if (updatedRoom.phase === "voting" && !showVoting) {
         setShowVoting(true);
         setCurrentTurn(null);
       }
 
-      // Reset voting when phase changes back to playing
       if (updatedRoom.phase === "playing" && showVoting) {
         setShowVoting(false);
         setHasVoted(false);
         setSelectedVote(null);
       }
 
-      // Check if phase changed to results
       if (
         (updatedRoom.phase === "results" ||
           updatedRoom.phase === "set-transition") &&
@@ -233,7 +313,6 @@ export default function Game() {
     });
 
     return () => {
-      // Clean up all timers
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
@@ -245,12 +324,16 @@ export default function Game() {
 
       socketService.off(SocketEvents.GAME_STARTED);
       socketService.off(SocketEvents.TURN_STARTED);
+      socketService.off(SocketEvents.GAME_PAUSED);
+      socketService.off(SocketEvents.GAME_RESUMED);
       socketService.off(SocketEvents.ANSWER_SUBMITTED);
       socketService.off(SocketEvents.TURN_TIMEOUT);
       socketService.off(SocketEvents.ROTATION_COMPLETE);
       socketService.off(SocketEvents.VOTING_PHASE);
+      socketService.off(SocketEvents.PLAYER_VOTED_EARLY);
       socketService.off(SocketEvents.VOTE_SUBMITTED);
       socketService.off(SocketEvents.ROUND_RESULTS);
+      socketService.off(SocketEvents.PLAYER_KICKED);
       socketService.off(SocketEvents.ROOM_UPDATED);
     };
   }, [
@@ -262,31 +345,68 @@ export default function Game() {
     addMessage,
     showVoting,
     setLastResults,
+    reset,
   ]);
 
   const handleSubmitAnswer = () => {
     if (!answer.trim() || !roomId || !playerId) return;
-
     socketService.submitAnswer(roomId, playerId, answer);
     setAnswer("");
   };
 
   const handleSubmitVote = () => {
     if (!selectedVote || !roomId || !playerId || hasVoted) return;
-
-    // Prevent voting for yourself
-    if (selectedVote === playerId) {
-      return;
-    }
-
+    if (selectedVote === playerId) return;
     socketService.submitVote(roomId, playerId, selectedVote);
   };
 
+  // FIX #2: Properly clear everything when leaving
   const handleLeaveGame = () => {
     if (roomId) {
       socketService.leaveRoom(roomId);
     }
+
+    // Clear all timers
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    if (votingTimerRef.current) {
+      clearInterval(votingTimerRef.current);
+      votingTimerRef.current = null;
+    }
+
+    // Clear Zustand store
+    reset();
+
+    // Clear localStorage
+    localStorage.removeItem("game-storage");
+
+    // Navigate to home
     navigate("/");
+  };
+
+  const handlePauseGame = () => {
+    if (!roomId || !isHost) return;
+    console.log("Pausing game with timeLeft:", timeLeft);
+    socketService.pauseGame(roomId, timeLeft);
+  };
+
+  const handleResumeGame = () => {
+    if (!roomId || !isHost) return;
+    socketService.resumeGame(roomId);
+  };
+
+  const handleKickPlayer = (kickPlayerId: string) => {
+    if (!roomId || !isHost) return;
+    socketService.kickPlayer(roomId, kickPlayerId);
+  };
+
+  const handleVoteInAdvance = () => {
+    setEarlyVoting(true);
+    if (roomId && playerId) {
+      socketService.voteInAdvance(roomId, playerId);
+    }
   };
 
   if (!room) return null;
@@ -297,7 +417,24 @@ export default function Game() {
   return (
     <div className="min-h-screen p-4 bg-white">
       <div className="max-w-4xl mx-auto space-y-4">
-        {/* Header */}
+        {voteNotifications.length > 0 && (
+          <div className="fixed top-4 right-4 z-50 space-y-2">
+            {voteNotifications.map((notification, idx) => (
+              <Alert key={idx} className="w-80 bg-green-50 border-green-200">
+                <AlertDescription>{notification}</AlertDescription>
+              </Alert>
+            ))}
+          </div>
+        )}
+
+        {isPaused && (
+          <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50">
+            <Badge variant="secondary" className="text-lg py-2 px-4">
+              Game Paused by Host
+            </Badge>
+          </div>
+        )}
+
         <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
@@ -317,13 +454,37 @@ export default function Game() {
               </div>
               <div className="text-right">
                 {isImpostor ? (
-                  <Badge variant="destructive" className="text-xs">
-                    You're the Impostor
-                  </Badge>
+                  <div className="flex flex-col items-start gap-2">
+                    <p className="text-xs text-muted-foreground">Your word:</p>
+                    <div className="flex items-center gap-2">
+                      <div>
+                        <p className="text-xl font-bold">
+                          {wordVisible ? (
+                            <Badge variant="destructive" className="text-xs">
+                              You're the Impostor
+                            </Badge>
+                          ) : (
+                            "••••••"
+                          )}
+                        </p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 p-0"
+                        onClick={() => setWordVisible(!wordVisible)}
+                      >
+                        {wordVisible ? (
+                          <EyeOff className="h-4 w-4" />
+                        ) : (
+                          <Eye className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </div>
+                  </div>
                 ) : (
                   <div className="flex flex-col items-start gap-2">
                     <p className="text-xs text-muted-foreground">Your word:</p>
-
                     <div className="flex items-center gap-2">
                       <div>
                         <p className="text-xl font-bold">
@@ -350,7 +511,6 @@ export default function Game() {
           </CardHeader>
         </Card>
 
-        {/* Voting Phase */}
         {isVotingPhase && (
           <>
             <Card>
@@ -365,13 +525,18 @@ export default function Game() {
                     )}
                   </CardTitle>
                   <div className="flex items-center gap-2">
-                    {(showVoting || room.phase === "voting") && (
+                    {(showVoting || room.phase === "voting") && !hasVoted && (
                       <>
                         <Clock className="h-4 w-4" />
                         <span className="text-sm font-semibold">
                           {votingTimeLeft}s
                         </span>
                       </>
+                    )}
+                    {hasVoted && (
+                      <Badge variant="default" className="text-xs">
+                        ✓ Voted
+                      </Badge>
                     )}
                   </div>
                 </div>
@@ -386,7 +551,7 @@ export default function Game() {
                         variant={
                           selectedVote === player.id ? "default" : "outline"
                         }
-                        className="h-auto py-3"
+                        className="h-auto py-3 relative"
                         onClick={() => !hasVoted && setSelectedVote(player.id)}
                         disabled={hasVoted}
                       >
@@ -397,6 +562,14 @@ export default function Game() {
                             </AvatarFallback>
                           </Avatar>
                           <span className="text-sm">{player.nickname}</span>
+                          {votedPlayers.has(player.id) && (
+                            <Badge
+                              variant="secondary"
+                              className="absolute top-1 right-1 h-4 text-xs"
+                            >
+                              ✓
+                            </Badge>
+                          )}
                         </div>
                       </Button>
                     ))}
@@ -416,13 +589,12 @@ export default function Game() {
               </CardContent>
             </Card>
 
-            {/* Chat visible during voting */}
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-lg">Answers</CardTitle>
               </CardHeader>
               <CardContent>
-                <ScrollArea className="h-[300px] pr-4">
+                <ScrollArea className="h-100 pr-4">
                   <div className="space-y-3">
                     {room.messages.length === 0 ? (
                       <p className="text-center text-muted-foreground py-8">
@@ -452,10 +624,8 @@ export default function Game() {
           </>
         )}
 
-        {/* Playing Phase */}
         {!isVotingPhase && (
           <>
-            {/* Turn Info */}
             {currentTurn && (
               <Card className={isMyTurn ? "border-2 border-black" : ""}>
                 <CardContent className="py-3">
@@ -489,7 +659,6 @@ export default function Game() {
               </Card>
             )}
 
-            {/* Messages */}
             <Card className="flex-1">
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
@@ -498,7 +667,7 @@ export default function Game() {
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => setEarlyVoting(true)}
+                      onClick={handleVoteInAdvance}
                     >
                       Vote in Advance
                     </Button>
@@ -535,8 +704,7 @@ export default function Game() {
               </CardContent>
             </Card>
 
-            {/* Answer Input - Only show when it's my turn */}
-            {isMyTurn && (
+            {isMyTurn && !isPaused && (
               <Card>
                 <CardContent className="pt-6">
                   <div className="flex gap-2">
@@ -544,7 +712,7 @@ export default function Game() {
                       placeholder="Describe the word..."
                       value={answer}
                       onChange={(e) => setAnswer(e.target.value)}
-                      onKeyPress={(e) =>
+                      onKeyDown={(e) =>
                         e.key === "Enter" && handleSubmitAnswer()
                       }
                       maxLength={200}
@@ -573,7 +741,7 @@ export default function Game() {
               {room.players.map((player) => (
                 <div
                   key={player.id}
-                  className="flex items-center gap-2 px-3 py-1.5 border rounded-full text-sm"
+                  className="flex items-center gap-2 px-3 py-1.5 border rounded-full text-sm relative group"
                 >
                   <Avatar className="h-5 w-5">
                     <AvatarFallback className="text-xs">
@@ -589,15 +757,44 @@ export default function Game() {
                       You
                     </Badge>
                   )}
+                  {isHost && player.id !== playerId && !player.isHost && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-5 w-5 p-0 ml-2 opacity-0 group-hover:opacity-100 hover:bg-red-100 hover:text-red-600 transition-opacity"
+                      onClick={() => handleKickPlayer(player.id)}
+                    >
+                      <X className="h-3 w-3" />
+                    </Button>
+                  )}
                 </div>
               ))}
             </div>
           </CardContent>
         </Card>
 
-        {/* Leave Game Button */}
         <Card>
-          <CardContent className="pt-6">
+          <CardContent className="pt-6 space-y-3">
+            {isHost && !isVotingPhase && (
+              <Button
+                className="w-full"
+                size="lg"
+                variant="outline"
+                onClick={isPaused ? handleResumeGame : handlePauseGame}
+              >
+                {isPaused ? (
+                  <>
+                    <Play className="mr-2 h-4 w-4" />
+                    Resume Game
+                  </>
+                ) : (
+                  <>
+                    <Pause className="mr-2 h-4 w-4" />
+                    Pause Game
+                  </>
+                )}
+              </Button>
+            )}
             <Button
               className="w-full"
               size="lg"

@@ -1,3 +1,4 @@
+// client/src/services/socket.ts
 import { io, Socket } from "socket.io-client";
 import { SocketEvents } from "../types";
 
@@ -118,8 +119,24 @@ class SocketService {
     this.emit(SocketEvents.SUBMIT_VOTE, { roomId, playerId, votedForId });
   }
 
+  voteInAdvance(roomId: string, playerId: string) {
+    this.emit(SocketEvents.VOTE_IN_ADVANCE, { roomId, playerId });
+  }
+
   nextSet(roomId: string) {
     this.emit(SocketEvents.NEXT_SET, { roomId });
+  }
+
+  pauseGame(roomId: string, timeLeft: number) {
+    this.emit(SocketEvents.PAUSE_GAME, { roomId, timeLeft });
+  }
+
+  resumeGame(roomId: string) {
+    this.emit(SocketEvents.RESUME_GAME, { roomId });
+  }
+
+  backToLobby(roomId: string) {
+    this.emit(SocketEvents.BACK_TO_LOBBY, { roomId });
   }
 }
 
